@@ -1,0 +1,71 @@
+[build-system]
+requires = ["hatchling >= 1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name        = "structure-factor-v2"
+version     = "2.0.0"
+description = "Structure factor S(k) of point sets in the unit cube: scattering intensity, Kaiser taper, NUFFT, plots"
+readme      = "README.md"
+license     = { text = "MIT" }
+requires-python = ">=3.9"
+
+keywords = [
+    "structure factor",
+    "scattering intensity",
+    "hyperuniformity",
+    "point process",
+    "power spectrum",
+    "Kaiser taper",
+    "NUFFT",
+    "finufft",
+]
+
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
+dependencies = [
+    "numpy",
+    "matplotlib",
+    "finufft",
+]
+
+[project.optional-dependencies]
+gpu12 = [
+    "cupy-cuda12x",
+    "cufinufft",
+]
+gpu13 = [
+    "cupy-cuda13x",
+    "cufinufft",
+]
+keops = ["pykeops"]
+torch = ["torch"]
+
+[project.urls]
+Repository = "https://github.com/adecacqueray/structure-factor-v2"
+Issues     = "https://github.com/adecacqueray/structure-factor-v2/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/structure_factor_v2"]
+
+[tool.hatch.build]
+exclude = [
+    "**/*.ipynb",
+    "**/*.jpg",
+    "**/*.png",
+    "**/__pycache__",
+]
+
+[tool.ruff]
+line-length = 100
