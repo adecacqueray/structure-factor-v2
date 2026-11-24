@@ -54,7 +54,7 @@ sf.plot_structure_factor(sf.curled_lattice(N, D))       # curl noise (replace ii
 |------------------|-------------------------------------------------------------|
 | `True`           | Default: the points self compensate for any boundary effects (eg they are periodic) |
 | `False`          | The points need a procedure to compensate for boundary effect (here tapering, with a kaiser taper)| 
-| `"both"`         | Compare the two                                | 
+| `"both"`         | Compare the two estimators                             | 
 
 ```python
 sf.plot_structure_factor(x, trust_boundary="both")              
