@@ -38,7 +38,7 @@ N, D = 10_000, 2
 x = sf.jittered_lattice(N, D)                # (N, D) points in [0, 1)^D, hyperuniform
 
 sf.plot(x)                                   # scatter plot
-sf.plot_structure_factor(x)                  # log-log S(k), raw values + radial average
+sf.plot_structure_factor(x)                  # log-log scattering intensity S(k), raw values + radial average
 ```
 
 Built-in samplers:
