@@ -11,7 +11,7 @@ can be estimated using the scattering intensity:
 
 ```math
 S(k) = \frac{1}{N} \left| \sum_{j=1}^{N} e^{-2i\pi \langle k, x_j \rangle} \right|^2,
-\qquad k\cdot{N^{frac{1}{D}} \in \mathbb{Z}^D \setminus \{0\}.
+\qquad k\cdot N^{frac{1}{D}} \in \mathbb{Z}^D \setminus \{0\}.
 ```
 
 $S(k)$ measures density fluctuations in Fourier space. A pattern is hyperuniform (blue noise) when
