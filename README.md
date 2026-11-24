@@ -7,9 +7,17 @@
 **Structure factor $S(k)$ of point sets in the unit cube $[0, 1)^D$**, estimated by the
 scattering intensity, with fast transforms (finufft / cufinufft) and ready-made log-log plots.
 
-The structure factor measures the density fluctuations of a point set in Fourier space
-(it is the power spectrum, up to normalisation). For a hyperuniform (blue-noise) pattern,
-$S(k) \to 0$ as $k \to 0$; for an order $\alpha$ hyperuniform pattern $S(k) \sim k^\alpha$.
+For a point set $(x_j)_{1 \le j \le N} \subset [0, 1)^D$, the structure factor (or power spectrum) is
+
+```math
+S(k) = \frac{1}{N} \left| \sum_{j=1}^{N} e^{-2i\pi \langle k, x_j\cdot N^{1/D} \rangle} \right|^2,
+\qquad k \in N^{-1/D}\,\mathbb{Z}^D \setminus \{0\}.
+```
+
+$S(k)$ measures density fluctuations in Fourier space. A pattern is hyperuniform (blue noise) when
+$S(k) \to 0$ as $|k| \to 0$, and hyperuniform of order $\alpha > 0$ when $S(k) \sim |k|^\alpha$.
+
+
 
 ---
 
