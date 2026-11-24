@@ -4,8 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/adecacqueray/structure-factor-v2/blob/main/LICENSE)
 [![GitHub](https://img.shields.io/badge/GitHub-adecacqueray%2Fstructure--factor--v2-181717?logo=github)](https://github.com/adecacqueray/structure-factor-v2)
 
-**Structure factor $S(k)$ of point sets in the unit cube $[0, 1)^D$**, estimated by the
-scattering intensity, with fast transforms (finufft / cufinufft), kaiser taper and ready-made log-log plots.
+**Structure factor $S(k)$ of point sets in the unit cube $[0, 1)^D$**, with fast transforms (finufft / cufinufft), kaiser taper and ready-made log-log plots.
 
 For a point set $(x_j)_{1 \le j \le N} \subset [0, 1)^D$, the structure factor or power spectrum
 can be estimated using the scattering intensity:
