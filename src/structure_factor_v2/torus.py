@@ -1,8 +1,9 @@
 """
 The unit torus [0, 1)^D and its dual lattice Z^D.
 
-    integer_grid, ball, half_ball
-                            integer points of Z^D: grids, balls, one representative per pair {k, -k}
+    integer_grid, ball, half_ball, half_cube, cube_wave_vectors
+                            integer points of Z^D: grids, balls, cubes, one representative
+                            per pair {k, -k}
     isotropic_wave_vectors  low modes + isotropically sampled high modes (D >= 4)
 
 Balls are given by an integer squared radius r2: ball(r2, D) = {k in Z^D : |k|^2 <= r2}.
@@ -70,6 +71,22 @@ def half_ball(r2: int, D: int) -> np.ndarray:
     first = k[np.arange(len(k)), np.argmax(k != 0, axis=1)]
     k = k * np.sign(first)[:, None].astype(np.int32)
     return k[np.lexsort(k.T[::-1])]
+
+
+def half_cube(K: int, D: int) -> np.ndarray:
+    """One k per pair {k, -k} with 0 < |k|_inf <= K (first non-zero coordinate > 0), int64."""
+    k = integer_grid(np.arange(-int(K), int(K) + 1, dtype=np.int64), D)
+    first = k[np.arange(len(k)), np.argmax(k != 0, axis=1)]
+    return k[first > 0]
+
+
+def cube_wave_vectors(K: int, D: int, stride: int = 1, K_in: int | None = None) -> np.ndarray:
+    """The wave vectors of `generalised_nufft.cube_sums`: n = stride * m, 0 < |m|_inf <= K,
+    |m|_inf > K_in (if given), one per pair {n, -n}, int64."""
+    m = half_cube(K, D)
+    if K_in is not None:
+        m = m[np.abs(m).max(axis=1) > K_in]
+    return stride * m
 
 
 # ── Wave vectors ──────────────────────────────────────────────────────────────

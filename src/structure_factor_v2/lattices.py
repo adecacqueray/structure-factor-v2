@@ -18,12 +18,8 @@ estimated by an LLL reduction (O(D^3) per candidate; for D <= 6 its approximatio
 Sloan & Joe (1994), Lattice Methods for Multiple Integration.
 
 Jittered lattice: each point is moved uniformly in a fundamental cell P of the lattice L (the
-parallelepiped of an LLL-reduced basis, volume 1/N). The translates of P tile the torus, so the
-characteristic function of the jitter vanishes on the dual lattice L* (origin excluded): the
-Bragg peaks disappear and the expected structure factor is exactly S(k) = 1 - |phi_P(k)|^2 ~ k^2.
-(Jittering
-in an axis-aligned cube of side N^(-1/D) instead is not a cell of L: Bragg peaks of height
-~ N |phi_cube(h)|^2 survive at the shortest dual vectors h, near k = 1.)
+parallelepiped of an LLL-reduced basis, volume 1/N). The expected structure factor is exactly 
+S(k) = 1 - |phi_P(k)|^2 ~ k^2.
 
 Curled lattice: curl noise jittering (Bærentzen, Frisvad & Martínez 2023, reference below):
 the lattice points are moved along the streamlines of a random divergence-free vector field.
@@ -38,7 +34,6 @@ original method:
   instead of the curl of a Perlin / sparse convolution noise. Each mode is exactly
   divergence-free (in 2D it is the curl of a stream function, in 3D of a vector potential),
   in any dimension D, and exactly periodic on the torus: no boundary effect.
-The displacement is one RK4 step along the field (the "direct method" of the paper).
 
 Reference
 ---------
@@ -49,14 +44,35 @@ implementation below is independent).
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from math import gcd
 
 import numpy as np
 from numpy.typing import NDArray
 
-__all__ = ["korobov_lattice", "jittered_lattice", "curled_lattice"]
+__all__ = ["korobov_lattice", "jittered_lattice", "curled_lattice", "curl_noise"]
 
-POINT_CHUNK = 50_000          # curled_lattice: points per evaluation of the field
+
+@dataclass
+class CurlNoiseConfig:
+    """Defaults of curled_lattice (see the module docstring for how they were tuned)."""
+    dt_base: float = 0.45              # dt = dt_base + dt_per_dim * D (RMS displacement, spacings)
+    dt_per_dim: float = 0.15
+    noise_scale: float = 5.0           # wavelength of the field, in spacings N^(-1/D) ...
+    min_wave_number: float = 1.25      # ... capped so that k_0 = N^(1/D) / noise_scale >= this
+    n_modes: int = 256
+    bandwidth: float = 0.3
+    n_steps: int = 1
+    point_chunk: int = 50_000          # points per evaluation of the field
+
+    def dt(self, D: int) -> float:
+        return self.dt_base + self.dt_per_dim * D
+
+    def scale(self, N: int, D: int) -> float:
+        return min(self.noise_scale, N ** (1.0 / D) / self.min_wave_number)
+
+
+curl_noise = CurlNoiseConfig()
 
 
 def jittered_lattice(N: int, D: int, seed=None, max_candidates: int | None = 100) -> NDArray:
@@ -72,37 +88,47 @@ def jittered_lattice(N: int, D: int, seed=None, max_candidates: int | None = 100
     return x % 1.0
 
 
-def curled_lattice(N: int, D: int, noise_scale: float = 5.0, dt: float = 1.2, n_modes: int = 256,
-                   bandwidth: float = 0.3, n_steps: int = 1, seed=None,
+def curled_lattice(N: int, D: int, noise_scale: float | None = None, dt: float | None = None,
+                   n_modes: int | None = None, bandwidth: float | None = None,
+                   n_steps: int | None = None, seed=None,
                    max_candidates: int | None = 100) -> NDArray:
     """
     A Korobov lattice of N points, randomly shifted, then moved along a random periodic
-    divergence-free field (curl noise jittering, see the module docstring). Any D; tuned in
-    2D and 3D.
+    divergence-free field (curl noise jittering, see the module docstring). Any D; tuned for
+    D = 2 .. 5. Every None parameter takes its default from `curl_noise`.
 
-    noise_scale : wavelength of the field, in lattice spacings N^(-1/D) (larger: smoother flow).
-    dt          : length of the flow, in lattice spacings (RMS displacement ~ dt spacings).
-                  Smaller keeps more of the lattice (Bragg peaks come back below ~0.8),
-                  larger brings the points closer to each other.
-    n_modes     : number of random Fourier modes of the field.
-    bandwidth   : relative spread of |k_m| around N^(1/D) / noise_scale.
-    n_steps     : RK4 steps (1: the paper's direct method; more: closer to the exact flow).
+    noise_scale : wavelength of the field, in lattice spacings N^(-1/D) (larger: smoother
+                  flow, but towards a warped crystal). Default min(5, N^(1/D) / 1.25).
+    dt          : length of the flow = RMS displacement, in lattice spacings (not the dt of
+                  the paper). Smaller keeps Bragg peaks (below ~0.4 + 0.15 D), larger brings
+                  the points closer to each other. Default 0.45 + 0.15 D.
+    n_modes     : number of random Fourier modes of the field (default 256; 64 is enough in
+                  2D/3D and faster).
+    bandwidth   : relative spread of |k_m| around N^(1/D) / noise_scale (default 0.3).
+    n_steps     : RK4 steps (default 1: the paper's direct method; more: closer to the exact flow).
     seed        : int, numpy Generator or None.
     """
+    cfg = curl_noise
+    noise_scale = cfg.scale(N, D) if noise_scale is None else noise_scale
+    dt = cfg.dt(D) if dt is None else dt
+    n_modes = cfg.n_modes if n_modes is None else n_modes
+    bandwidth = cfg.bandwidth if bandwidth is None else bandwidth
+    n_steps = cfg.n_steps if n_steps is None else n_steps
     rng = np.random.default_rng(seed)
     z = _korobov_generator(N, D, rng, max_candidates)
     x = (_lattice_points(z, N) + rng.random(D)) % 1.0
     k, u, phase = _solenoidal_modes(N, D, noise_scale, n_modes, bandwidth, rng)
     h = dt * N ** (-1.0 / D) / n_steps
-    for s in range(0, N, POINT_CHUNK):
-        y = x[s:s + POINT_CHUNK]
+    chunk = cfg.point_chunk
+    for s in range(0, N, chunk):
+        y = x[s:s + chunk]
         for _ in range(n_steps):
             a = h * _velocity(y, k, u, phase)
             b = h * _velocity(y + a / 2, k, u, phase)
             c = h * _velocity(y + b / 2, k, u, phase)
             d = h * _velocity(y + c, k, u, phase)
             y = y + (a + 2 * b + 2 * c + d) / 6
-        x[s:s + POINT_CHUNK] = y
+        x[s:s + chunk] = y
     return x % 1.0
 
 

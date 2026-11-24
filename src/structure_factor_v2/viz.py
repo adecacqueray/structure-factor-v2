@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import NDArray
 
-from .structure_factor import structure_factor_and_average, tapered_kmin
+from .structure_factor import CFG, structure_factor_and_average, tapered_kmin
 
 
 def _show_or_return(fig, axes, return_fig: bool):
@@ -48,7 +48,7 @@ def plot(
         lo = (1 - zoom) * np.random.rand(D)
         pts = pts[((lo <= unit) & (unit <= lo + zoom)).all(axis=1)]
 
-    kw = dict(s=10_000 / len(pts), color="black")
+    kw = dict(s=30_000 / len(pts), color="black")
     kw.update(scatter_kw)
 
     if ax is None:
@@ -71,8 +71,9 @@ def plot(
 
 def plot_structure_factor(
     points: NDArray,
-    resolution: int = 20_000,
-    precision: str = "float32",
+    resolution: int = 30_000,
+    precision: str = "float64",
+    detect_peaks: bool = True,
     ax: plt.Axes | None = None,
     return_fig: bool = False,
     title: str = None,
@@ -89,15 +90,23 @@ def plot_structure_factor(
 
     S is estimated by the scattering intensity on the integer wave vectors up to 2 N^(1/D);
     k is normalised so that k = 1 is the inter-particle wave number N^(1/D). Raw values are
-    shown in grey, their smoothed radial average as a curve. For an order-alpha hyperuniform
+    shown in grey, their smoothed radial average as a curve. Every mode of the cube
+    |n|_inf <= N^(1/D) is computed (it contains a Bragg peak of any lattice, by Minkowski),
+    then the even modes up to 2 N^(1/D), and so on (see `structure_factor`). For an order-alpha hyperuniform
     pattern S(k) ~ k^alpha at small k.
+
+    On top, a separate peak-detector layer (`peaks.detect_peaks`, every mode up to
+    2 Rmin): local peaks (S >= 100 x shell average, violet) and Bragg peaks (S >= 100, red).
+    These modes are chosen for being exceptional, so they never enter the average.
 
     Parameters
     ----------
     points : (N, D) array in the unit cube (not checked).
-    resolution : number of wave vectors shown. For D >= 4 (no fast transform) only
-        resolution / 10 are evaluated: ask for 200_000 to get 20_000.
+    resolution : D > CONFIG.max_exhaustive_D only: number of sampled wave vectors
+        (see `structure_factor`).
     precision : "float32", or "float64" (much slower) to resolve S below ~1e-10.
+    detect_peaks : bool, whether to add the bragg peak-detector layer:
+        S >= 100*local_S get grey, S >= 100 get red
     ax, return_fig : draw on existing axes; return (fig, ax) instead of showing.
     title : default depends on trust_boundary.
     trust_boundary : True, False or "both".
@@ -113,6 +122,8 @@ def plot_structure_factor(
     """
     pts = np.asarray(points).reshape(-1, np.asarray(points).shape[-1])
     N, D = pts.shape
+    detect_peaks = plot_kw.pop("detect_brag_peaks", detect_peaks)
+    k_right = 2.0
 
     if isinstance(trust_boundary, str):
         if trust_boundary != "both":
@@ -162,9 +173,23 @@ def plot_structure_factor(
         else:
             c_light, c_dark = "#d8c7b6", "#9c8068"
         Sgroup_interp = np.exp(np.interp(np.log(k), np.log(kgroup), np.log(Sgroup)))
-        bigS = S >= 30 * Sgroup_interp
-        ax.scatter(k[~bigS], S[~bigS], s=5, color=c_light, alpha=0.6, zorder=2)
-        ax.scatter(k[bigS], S[bigS], s=20, color=c_dark, alpha=1.0, zorder=2)
+        bigS = S >= 100 * Sgroup_interp
+        braggS = S >= 100
+        # display only: at most CFG.max_display raw values, every peak kept
+        peak = bigS | braggS
+        rest = np.flatnonzero(~peak)
+        n_rest = max(0, CFG.max_display - int(peak.sum()))
+        if len(rest) > n_rest:
+            rest = np.random.default_rng(0).choice(rest, n_rest, replace=False)
+        shown = np.zeros(len(k), dtype=bool)
+        shown[rest] = True
+        shown |= peak
+        ax.scatter(k[shown], S[shown], s=5, color=c_light, alpha=0.6, zorder=2)
+        if detect_peaks:
+            ax.scatter(k[bigS], S[bigS], s=20, color=c_dark, alpha=1.0, zorder=2)
+            if np.any(braggS):
+                ax.scatter(k[braggS], S[braggS], s=30, color="red", alpha=1.0, zorder=2, label = "S >= 100")
+
 
         # --- Smoothed curve ---
         curve_kw = {"color": "tab:blue", "zorder": 3, "label": None,
@@ -178,14 +203,13 @@ def plot_structure_factor(
         ax.loglog(kgroup, Sgroup, **curve_kw)
 
     if ax.get_legend_handles_labels()[1]:
-        ax.legend()
+        ax.legend(loc="upper left")   # loc="best" is slow with many points
 
     # --- Reference lines and axis limits (only when we own the figure) ---
     if own_fig:
         ax.axvline(1, color="green", linewidth=2, alpha=0.2, zorder=1)
         ax.axhline(1, color="green", linewidth=2, alpha=0.2, zorder=1)
-        ax.set_xlim(right=2)
-        ax.set_ylim(top=2)
+        ax.set_xlim(right=k_right)
         ax.set_xlabel(r"$k$")
         ax.set_ylabel(r"$S(k)$")
 

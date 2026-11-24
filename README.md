@@ -27,119 +27,54 @@ pip install structure-factor-v2              # CPU: numpy + finufft
 
 ```python
 import structure_factor_v2 as sf
+import numpy as np
 
-x = sf.jittered_lattice(10_000, 2)           # (N, D) points in [0, 1)^D, hyperuniform
+N, D = 10_000, 2
+x = sf.jittered_lattice(N, D)           # (N, D) points in [0, 1)^D, hyperuniform
 
 sf.plot(x)                                   # scatter plot
 sf.plot_structure_factor(x)                  # log-log S(k), raw values + radial average
-
-kint, S = sf.structure_factor(x)             # raw estimate: integer wave vectors (M, D), S (M,)
-k, S, kgroup, Sgroup = sf.structure_factor_and_average(x)   # normalised k, raw + smoothed
 ```
 
-A jittered lattice (a Korobov lattice, randomly shifted, every point moved uniformly within its
-cell) is a cheap hyperuniform pattern: $S(k) \sim k^2$ at small $k$. Compare with i.i.d. points
-($S \equiv 1$) and with the bare lattice (a crystal: $S = 0$ except on its Bragg peaks):
+Built-in samplers:
 
 ```python
-import numpy as np
-sf.plot_structure_factor(np.random.rand(10_000, 2))          # Poisson: S = 1
-sf.plot_structure_factor(sf.korobov_lattice(10_000, 2))      # crystal
+sf.plot_structure_factor(np.random.rand(N, D))          # Poisson: S = 1
+sf.plot_structure_factor(sf.korobov_lattice(N, D))      # crystal
+sf.plot_structure_factor(sf.jittered_lattice(N, D))     # noisy cristal, remove brag peaks
+sf.plot_structure_factor(sf.curled_lattice(N, D))       # curl noise (better than jittering)
 ```
-
-A curled lattice goes further: the Korobov lattice is moved along a random periodic
-divergence-free flow (curl noise jittering, Bærentzen, Frisvad & Martínez, SIGGRAPH Asia
-2023). The flow preserves volume, so the points stay well separated, and the Bragg peaks are
-smeared out: a blue noise point set, with a much lower $S(k)$ at small $k$ than the jittered
-lattice. Any dimension (tuned in 2D and 3D), about 3 s for $10^5$ points.
-
-```python
-x = sf.curled_lattice(10_000, 2)                             # noise_scale=5.0, dt=1.2
-sf.plot_structure_factor(x)
-```
-
-Wave numbers returned by `structure_factor_and_average` (and shown by
-`plot_structure_factor`) are normalised so that $k = 1$ is the inter-particle wave
-number $N^{1/D}$.
 
 ---
 
 ## Two estimators: `trust_boundary`
 
-| `trust_boundary` | When                                                        | Estimator |
-|------------------|-------------------------------------------------------------|-----------|
-| `True` (default) | the points are periodic on the unit torus                   | $S(n) = \lvert\sum_j e^{2i\pi n \cdot x_j}\rvert^2 / N$ on the integer wave vectors $n$ |
-| `False`          | the points are a window cut out of a larger, non-periodic pattern | points restricted to $[m, 1-m)^D$, separable Kaiser–Bessel taper, debiased with the density |
-| `"both"`         | (plots only) compare the two                                |           |
+| `trust_boundary` | When                                                        | 
+|------------------|-------------------------------------------------------------|
+| `True` (default) | the points self compensate for any boundary effects (eg they are periodic) |
+| `False`          | the points need a procedure to compensate for boundary effect (here tapering, with a kaiser taper)| 
+| `"both"`         | (plots only) compare the two                                | 
 
 ```python
-sf.plot_structure_factor(x, trust_boundary=False)              # margin m = 0.1, beta automatic
-sf.plot_structure_factor(x, trust_boundary=False, margin=0.05, beta=10)
-sf.plot_structure_factor(x, trust_boundary="both")
+sf.plot_structure_factor(x, trust_boundary=False)              
 ```
-
-With the taper, leakage decays like $e^{-2\beta}$ while the resolution at small $k$
-coarsens (about $\beta/\pi$ modes). `beta=None` picks
-$\beta = \min(15, \pi\, n_{\text{axis}} / 4)$, see `sf.auto_beta`; nothing is plotted
-below the resolution limit `sf.tapered_kmin(N, D, margin, beta)`.
 
 ---
 
 ## Backends, precision and tolerance
 
-Every function takes `backend`, `precision` and `nufft_tolerance`:
+Structure factor computation takes `backend`, `precision` and `nufft_tolerance`, assumming 
+that the backend's dependency are properly installed :
 
-| `backend`     | method                                   | dimensions | accuracy |
-|---------------|------------------------------------------|------------|----------|
-| `"finufft"`   | type-1 non-uniform FFT, CPU              | D <= 3     | `nufft_tolerance` |
-| `"cufinufft"` | type-1 non-uniform FFT, GPU (+ cupy)     | D <= 3     | `nufft_tolerance` |
-| `"keops"`     | direct sums, pykeops (GPU if available)  | any        | exact |
-| `"torch"`     | direct sums, torch (cuda if available)   | any        | exact |
-| `"numpy"`     | direct sums, numpy, chunked              | any        | exact |
-| `"cupy"`      | direct sums, cupy, chunked               | any        | exact |
+| `backend`     | method                                   | dimensions |
+|---------------|------------------------------------------|------------|
+| `"finufft"`   | type-1 non-uniform FFT, CPU              | D <= 6     | 
+| `"cufinufft"` | same, GPU                                | D <= 6     | 
+| `"keops"`     | direct sums, pykeops (GPU if available)  | any        | 
+| `"torch"`     | direct sums, torch (cuda if available)   | any        | 
+| `"numpy"`     | direct sums, numpy                       | any        | 
+| `"cupy"`      | direct sums, cupy                        | any        |
 
-`"auto"` (default): (cu)finufft for D <= 3 (cufinufft when it works), direct sums with cupy or
-numpy above; `device="cpu"` keeps "auto" off the GPU. `keops` and `torch` are optional
-installs, only used when asked for (KeOps counts as working only if it compiles a test
-reduction).
-
-| Dimension | Wave vectors |
-|-----------|--------------|
-| $D \le 3$ | every integer mode of the cube up to $2 N^{1/D}$ |
-| $D \ge 4$ | all low modes + isotropically sampled high modes (`resolution`) |
-
-```python
-sf.plot_structure_factor(x, backend="keops")                  # exact sums
-sf.plot_structure_factor(x, precision="float64", nufft_tolerance=1e-14)
-sf.available_backends(D=2)                                    # what works here
-sf.check_gpu()
-```
-
-`nufft_tolerance="auto"` means 1e-5 in float32 and 1e-12 in float64; float32 sets a floor on
-the smallest resolvable S (float64 for S below ~1e-6 at large N).
-
-Tunable constants (margin, $k_{\max}$, radial bins, smoothing...) are in `sf.CONFIG`, editable in place:
-
-```python
-sf.CONFIG.k_max = 3.0          # wave numbers up to 3 N^(1/D)
-```
-
----
-
-## API
-
-| Function | Returns |
-|----------|---------|
-| `structure_factor(points, resolution=2000, device="auto", precision="float32", trust_boundary=True, margin=None, beta=None, backend="auto", nufft_tolerance="auto")` | `kint (M, D)`, `S (M,)`, sorted by $\lvert n\rvert$ |
-| `structure_factor_and_average(points, resolution=20000, min_val=1e-20, precision="float32", trust_boundary=True, margin=None, beta=None, backend="auto", nufft_tolerance="auto", device="auto")` | `kraw, Sraw, kgroup, Sgroup` |
-| `plot_structure_factor(points, resolution=20000, precision="float32", ax=None, return_fig=False, title=None, trust_boundary=True, margin=None, beta=None, backend="auto", nufft_tolerance="auto", device="auto", **plot_kw)` | `None`, or `(fig, ax)` |
-| `plot(points, auto_zoom=False, max_points=30000, ax=None, return_fig=False, figsize=(8, 8), **scatter_kw)` | `None`, or `(fig, ax)` |
-| `jittered_lattice(N, D, seed=None, max_candidates=100)`, `korobov_lattice(N, D, shift=True, seed=None, max_candidates=100)` | `(N, D)` test point sets |
-| `curled_lattice(N, D, noise_scale=5.0, dt=1.2, n_modes=256, bandwidth=0.3, n_steps=1, seed=None, max_candidates=100)` | `(N, D)` blue noise point set |
-| `auto_beta(n_points, D, margin)`, `tapered_kmin(n_points, D, margin=None, beta=None)` | Kaiser parameter, smallest trustworthy $k$ |
-| `check_gpu()`, `available_backends(D=None)`, `BACKENDS` | diagnostic, backends that work here |
-
-Points must lie in $[0, 1)^D$; this is not checked.
 
 ---
 
@@ -161,11 +96,10 @@ Points must lie in $[0, 1)^D$; this is not checked.
 - **structure-factor**: the original package of the same group,
   [For-a-few-DPPs-more/structure-factor](https://github.com/For-a-few-DPPs-more/structure-factor).
 
-Used by [blue-sampler](https://pypi.org/project/blue-sampler/), which re-exports
-`plot`, `plot_structure_factor`, `structure_factor` and `structure_factor_and_average`.
+Used by [blue-sampler](https://pypi.org/project/blue-sampler/).
 
 ---
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+MIT

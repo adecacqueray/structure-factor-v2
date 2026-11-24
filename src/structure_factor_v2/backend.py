@@ -10,9 +10,12 @@ Backends of the Fourier sums F(n) = sum_j c_j exp(2i pi n.x_j), for points x (N,
     "numpy"       direct sums, numpy, chunked               any         exact
     "cupy"        direct sums, cupy, chunked                any         exact
 
-"auto" (default): D <= 3 -> cufinufft if it works, else finufft; D >= 4 -> cupy if it works,
-else numpy. device="cpu" restricts "auto" to finufft / numpy. keops and torch are optional
-and only used when asked for. `check_gpu` reports what is usable.
+resolve_backend("auto", D): D <= 3 -> cufinufft if it works, else finufft; D >= 4 -> cupy if
+it works, else numpy. device="cpu" restricts "auto" to finufft / numpy. keops and torch are
+optional and only used when asked for. `check_gpu` reports what is usable.
+
+The (cu)finufft calls here are limited to D <= 3; `generalised_nufft` extends them to any D
+(3D slices), and `structure_factor` uses it for D <= CONFIG.max_exhaustive_D.
 """
 from __future__ import annotations
 
@@ -27,7 +30,7 @@ BACKENDS = ("finufft", "cufinufft", "keops", "torch", "numpy", "cupy")
 NUFFT_BACKENDS = ("finufft", "cufinufft")
 NUFFT_MAX_DIM = 3
 PRECISIONS = ("float32", "float64")
-AUTO_NUFFT_TOLERANCE = {"float32": 1e-5, "float64": 1e-12}
+AUTO_NUFFT_TOLERANCE = {"float32": 1e-6, "float64": 1e-12}
 CHUNK_ELEMS = 8_000_000                     # direct sums: (points x wave vectors) per chunk
 NUFFT_CHUNK = 400_000                       # points per 3D NUFFT call
 
