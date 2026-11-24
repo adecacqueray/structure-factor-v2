@@ -11,7 +11,7 @@ can be estimated using the scattering intensity:
 
 ```math
 S(k) = \frac{1}{N} \left| \sum_{j=1}^{N} e^{-2i\pi \langle k, x_j \rangle} \right|^2,
-\qquad k \in \mathbb{Z}^D \setminus \{0\}.
+\qquad k\cdot{N^{frac{1}{D} \in \mathbb{Z}^D \setminus \{0\}.
 ```
 
 $S(k)$ measures density fluctuations in Fourier space. A pattern is hyperuniform (blue noise) when
@@ -59,7 +59,7 @@ sf.plot_structure_factor(sf.curled_lattice(N, D))       # curl noise (iid jitter
 - `structure-factor-v2` only accepts points in the unit cube $[0, 1)^D$. If your points live in
   another domain, first extract a cubic sub-window, rescale it to $[0, 1)^D$, and use
   `trust_boundary=False` (see below) to compensate for the induced boundary effects.
-- To make plots comparable across $N$ and $D$, the x-axis shows $|k| / N^{1/D}$: an abscissa of 1
+- To make plots comparable across $N$ and $D$, the x-axis use a scale invariant convention: an abscissa of 1
   corresponds to a wavelength of the order of the mean interparticle distance $N^{-1/D}$.
 
 ---
