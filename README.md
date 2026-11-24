@@ -9,7 +9,7 @@ scattering intensity, with fast transforms (finufft / cufinufft) and ready-made 
 
 The structure factor measures the density fluctuations of a point set in Fourier space
 (it is the power spectrum, up to normalisation). For a hyperuniform (blue-noise) pattern,
-$S(k) \to 0$ as $k \to 0$; for an order-$\alpha$ hyperuniform pattern $S(k) \sim k^\alpha$.
+$S(k) \to 0$ as $k \to 0$; for an order $\alpha$ hyperuniform pattern $S(k) \sim k^\alpha$.
 
 ---
 
