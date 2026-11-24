@@ -10,8 +10,8 @@ For a point set $(x_j)_{1 \le j \le N} \subset [0, 1)^D$, the structure factor o
 can be estimated using the scattering intensity:
 
 ```math
-S(k) = \frac{1}{N} \left| \sum_{j=1}^{N} e^{-\frac{2i\pi}{L} \langle k, x_j \rangle} \right|^2,
-\qquad k\cdot L} \in \mathbb{Z}^D \setminus \{0\}, \qquad L = N^{\frac{1}{D}.
+S(k) = \frac{1}{N} \left| \sum_{j=1}^{N} e^{-2i\pi L \langle k, x_j \rangle} \right|^2,
+\qquad k \in \tfrac{1}{L}\,\mathbb{Z}^D \setminus \{0\}, \qquad L = N^{1/D}.
 ```
 
 $S(k)$ measures density fluctuations in Fourier space. A pattern is hyperuniform (blue noise) when
