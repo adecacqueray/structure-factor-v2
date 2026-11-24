@@ -29,7 +29,7 @@ import structure_factor_v2 as sf
 import numpy as np
 
 N, D = 10_000, 2
-x = sf.jittered_lattice(N, D)           # (N, D) points in [0, 1)^D, hyperuniform
+x = sf.jittered_lattice(N, D)                # (N, D) points in [0, 1)^D, hyperuniform
 
 sf.plot(x)                                   # scatter plot
 sf.plot_structure_factor(x)                  # log-log S(k), raw values + radial average
