@@ -80,7 +80,7 @@ sf.plot_structure_factor(x, trust_boundary="both")
 
 ## Backends, precision and tolerance
 
-The structure factor computation takes `backend`, `precision` and `nufft_tolerance` arguments,
+The structure factor computation takes `backend`, `precision` (float32 / float64) and `nufft_tolerance` arguments,
 assuming the backend's dependencies are properly installed:
 
 | `backend`     | method                                   | dimensions          |
