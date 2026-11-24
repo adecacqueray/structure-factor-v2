@@ -5,9 +5,10 @@
 [![GitHub](https://img.shields.io/badge/GitHub-adecacqueray%2Fstructure--factor--v2-181717?logo=github)](https://github.com/adecacqueray/structure-factor-v2)
 
 **Structure factor $S(k)$ of point sets in the unit cube $[0, 1)^D$**, estimated by the
-scattering intensity, with fast transforms (finufft / cufinufft) and ready-made log-log plots.
+scattering intensity, with fast transforms (finufft / cufinufft), kaiser taper and ready-made log-log plots.
 
-For a point set $(x_j)_{1 \le j \le N} \subset [0, 1)^D$, the structure factor (or power spectrum) is
+For a point set $(x_j)_{1 \le j \le N} \subset [0, 1)^D$, the structure factor or power spectrum
+can be estimated using the scattering intensity:
 
 ```math
 S(k) = \frac{1}{N} \left| \sum_{j=1}^{N} e^{-2i\pi \langle k, x_j \rangle} \right|^2,
@@ -80,8 +81,7 @@ sf.plot_structure_factor(x, trust_boundary="both")
 
 ## Backends, precision and tolerance
 
-The structure factor computation takes `backend`, `precision` (float32 / float64) and `nufft_tolerance` arguments,
-assuming the backend's dependencies are properly installed:
+The structure factor computation takes `backend` arguments to compute the structure factor, assuming the backend's dependencies are properly installed:
 
 | `backend`     | method                                   | dimensions          |
 |---------------|------------------------------------------|---------------------|
