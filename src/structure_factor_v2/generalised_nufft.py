@@ -26,12 +26,9 @@ D >= 4: 3D slices
     plan serves batches of slices (n_trans). c runs over one representative per pair
     {c, -c} plus c = 0: (2K + 1)^(D-3) / 2 slices.
 
-The cost is ~ n_transforms NUFFTs of N points per level (see `cube_cost`).
+The cost is ~ (2K + 1)^(D-3) / 2 NUFFTs of N points per level (one for D <= 3).
 """
 from __future__ import annotations
-
-import time
-from typing import Callable, Iterator
 
 import numpy as np
 
@@ -39,7 +36,7 @@ from .backend import (NUFFT_BACKENDS, NUFFT_CHUNK, _complex, _load, _real, resol
                       resolve_precision, resolve_tolerance)
 from .torus import half_cube, integer_grid
 
-__all__ = ["cube_sums", "iter_cube_sums", "multiscale_cube_sums", "cube_cost", "level_strides"]
+__all__ = ["cube_sums", "multiscale_cube_sums", "level_strides"]
 
 MAX_BATCH_MODES = 2 ** 23           # modes per batch of transforms (a single one may exceed it)
 MAX_BATCH_WEIGHTS = 2 ** 24         # entries of the (n_trans, N) weight array of a batch
@@ -69,16 +66,6 @@ def level_strides(K: int, n_levels: int) -> list:
     return [(1, None)] + [(2 ** l, int(K) // 2) for l in range(1, n_levels)]
 
 
-def cube_cost(N: int, D: int, K: int, n_levels: int = 1) -> dict:
-    """Cost of `multiscale_cube_sums` (without building anything): n_modes (one per pair),
-    n_transforms (NUFFTs of N points), work = n_transforms * N."""
-    b = 2 * K + 1
-    n_modes = (b ** D - 1) / 2 + (n_levels - 1) * (b ** D - (2 * (K // 2) + 1) ** D) / 2
-    per_level = 1 + (b ** (D - 3) - 1) // 2 if D > 3 else 1
-    n_transforms = n_levels * per_level
-    return {"n_modes": n_modes, "n_transforms": n_transforms, "work": n_transforms * N}
-
-
 class _BatchedNufft:
     """Type-1 NUFFTs of fixed points u (N, d) in [0, 1)^d, for batches of weight vectors.
 
@@ -86,9 +73,8 @@ class _BatchedNufft:
     centred cube of side b in finufft's modeord=0 order (as `_grid(b, d)`).
     """
 
-    def __init__(self, u, backend, precision, tol, upsampfac=None):
+    def __init__(self, u, backend, precision, tol):
         self.lib = _load(backend)
-        self.opts = {} if upsampfac is None else {"upsampfac": float(upsampfac)}
         if backend == "cufinufft":
             import cupy
             self.xp, self.to_np = cupy, cupy.asnumpy
@@ -105,15 +91,8 @@ class _BatchedNufft:
         if (b, B) not in self.plans:
             plans = []
             for x in self.u:
-                try:
-                    plan = self.lib.Plan(1, (b,) * self.d, n_trans=B, eps=self.tol, isign=1,
-                                         dtype=self.dtype, **self.opts)
-                except Exception:                        # e.g. upsampfac unsupported: default
-                    if not self.opts:
-                        raise
-                    self.opts = {}
-                    plan = self.lib.Plan(1, (b,) * self.d, n_trans=B, eps=self.tol, isign=1,
-                                         dtype=self.dtype)
+                plan = self.lib.Plan(1, (b,) * self.d, n_trans=B, eps=self.tol, isign=1,
+                                     dtype=self.dtype)
                 plan.setpts(*x)
                 plans.append(plan)
             self.plans[(b, B)] = plans
@@ -130,99 +109,6 @@ class _BatchedNufft:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def iter_cube_sums(
-    points: np.ndarray,
-    K: int,
-    weights: np.ndarray | None = None,
-    stride: int = 1,
-    K_in: int | None = None,
-    backend: str = "auto",
-    device: str = "auto",
-    precision: str = "float32",
-    nufft_tolerance: float | str = "auto",
-    keep: Callable[[np.ndarray], np.ndarray] | None = None,
-    verbose: bool = False,
-    upsampfac: float | None = None,
-) -> Iterator[tuple[np.ndarray, np.ndarray]]:
-    """
-    Yield (kint (M, D) int64, F (M,) complex128) batch by batch, for every wave vector
-    n = stride * m, 0 < |m|_inf <= K (and |m|_inf > K_in if K_in is given), one per pair
-    {n, -n} (first non-zero coordinate positive; this uses F(-n) = conj(F(n)), so complex
-    weights are refused for D >= 4).
-
-    keep      : optional F -> boolean mask, applied before the wave vectors are built (e.g. a
-                threshold on |F|^2): only the selected modes are yielded.
-    upsampfac : (cu)finufft upsampling factor (default: the library's, 2). 1.25 is ~2.5x
-                faster on CPU, and accurate enough with a loose tolerance.
-    Other parameters as in `cube_sums`.
-    """
-    pts = np.asarray(points, dtype=float).reshape(-1, np.asarray(points).shape[-1])
-    N, D = pts.shape
-    d = min(D, 3)
-    K, stride = int(K), int(stride)
-    if K < 1 or stride < 1:
-        raise ValueError(f"K and stride must be positive integers, got K={K}, stride={stride}")
-    K_in = -1 if K_in is None else int(K_in)
-    if K_in >= K:
-        return
-    precision = resolve_precision(precision)
-    backend = resolve_backend(backend, d, device)
-    if backend not in NUFFT_BACKENDS:
-        raise ValueError(f"cube sums need finufft or cufinufft, got backend {backend!r}")
-    tol = resolve_tolerance(nufft_tolerance, precision)
-    c = np.ones(N) if weights is None else np.asarray(weights).reshape(N)
-    if np.iscomplexobj(c) and D > 3:
-        raise ValueError("complex weights are only supported for D <= 3")
-    if stride > 1:                                   # fold the s^D sub-cubes onto [0, 1)^D
-        pts = np.mod(stride * pts, 1.0)
-
-    b = 2 * K + 1
-    C = _slices(D, K)
-    grid = _grid(b, d)
-    grid_inf = np.abs(grid).max(axis=1)
-    head = grid[np.arange(len(grid)), np.argmax(grid != 0, axis=1)] > 0   # half space, m != 0
-    engine = _BatchedNufft(pts[:, :d], backend, precision, tol, upsampfac)
-    xp = engine.xp
-    v_x, c_x = xp.asarray(pts[:, d:]), xp.asarray(c)
-    B = _batch_size(N, b, d, len(C))
-    n_batches = -(-len(C) // B)
-    t0 = time.time()
-
-    for done, s in enumerate(range(0, len(C), B), start=1):
-        batch = np.arange(s, min(s + B, len(C)))
-        w = xp.zeros((B, N), dtype=engine.dtype)         # padded to B: one plan
-        if D > d:                                        # slice c: weights c_j exp(2i pi c.v_j)
-            phase = v_x @ xp.asarray(C[batch].T, dtype=float)
-            w[:len(batch)] = c_x[None, :] * xp.exp(2j * np.pi * phase.T)
-        else:
-            w[0] = c_x
-        Fb = engine(w, b)[:len(batch)]
-        ks, Fs = [], []
-        for t, i in enumerate(batch):
-            ci = C[i]
-            c_inf = int(np.abs(ci).max()) if ci.size else 0
-            ok = head.copy() if c_inf == 0 else np.ones(len(grid), dtype=bool)
-            if c_inf <= K_in:                            # hole: drop |m|_inf <= K_in
-                ok &= grid_inf > K_in
-            if keep is not None:
-                ok &= np.asarray(keep(Fb[t]), dtype=bool)
-            if not ok.any():
-                continue
-            m = grid[ok]
-            ks.append(np.concatenate([m, np.repeat(ci[None], len(m), axis=0)], axis=1))
-            Fs.append(Fb[t][ok])
-        if verbose and (done == n_batches or done % max(1, n_batches // 10) == 0):
-            el = time.time() - t0
-            print(f"cube sums (stride {stride}): {done}/{n_batches} NUFFT batches, {el:.1f}s, "
-                  f"eta {el * (n_batches / done - 1):.1f}s")
-        if ks:                                           # first non-zero coordinate > 0
-            k, F = np.concatenate(ks), np.concatenate(Fs)
-            flip = k[np.arange(len(k)), np.argmax(k != 0, axis=1)] < 0
-            k[flip] *= -1
-            F[flip] = np.conj(F[flip])                   # never happens for D <= 3
-            yield stride * k, F
-
-
 def cube_sums(
     points: np.ndarray,
     K: int,
@@ -233,7 +119,6 @@ def cube_sums(
     device: str = "auto",
     precision: str = "float32",
     nufft_tolerance: float | str = "auto",
-    verbose: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     F(n) = sum_j c_j exp(2i pi n.x_j) on every wave vector n = stride * m, 0 < |m|_inf <= K
@@ -250,20 +135,70 @@ def cube_sums(
     device          : "auto" | "cpu" | "gpu", for backend="auto".
     precision       : "float32" | "float64".
     nufft_tolerance : relative tolerance of (cu)finufft, float or "auto".
-    verbose         : print the progress.
 
     Returns
     -------
     kint : (M, D) int64, one wave vector per pair {n, -n}, first non-zero coordinate
-           positive (unordered).
+           positive (unordered; uses F(-n) = conj(F(n)), so complex weights need D <= 3).
     F    : (M,) complex128.
     """
-    parts = list(iter_cube_sums(points, K, weights, stride, K_in, backend, device, precision,
-                                nufft_tolerance, None, verbose))
-    D = np.asarray(points).shape[-1]
-    if not parts:
+    pts = np.asarray(points, dtype=float).reshape(-1, np.asarray(points).shape[-1])
+    N, D = pts.shape
+    d = min(D, 3)
+    K, stride = int(K), int(stride)
+    if K < 1 or stride < 1:
+        raise ValueError(f"K and stride must be positive integers, got K={K}, stride={stride}")
+    K_in = -1 if K_in is None else int(K_in)
+    if K_in >= K:
         return np.zeros((0, D), dtype=np.int64), np.zeros(0, dtype=np.complex128)
-    return np.concatenate([k for k, _ in parts]), np.concatenate([f for _, f in parts])
+    precision = resolve_precision(precision)
+    backend = resolve_backend(backend, d, device)
+    if backend not in NUFFT_BACKENDS:
+        raise ValueError(f"cube sums need finufft or cufinufft, got backend {backend!r}")
+    tol = resolve_tolerance(nufft_tolerance, precision)
+    c = np.ones(N) if weights is None else np.asarray(weights).reshape(N)
+    if np.iscomplexobj(c) and D > 3:
+        raise ValueError("complex weights are only supported for D <= 3")
+    if stride > 1:                                   # fold the s^D sub-cubes onto [0, 1)^D
+        pts = np.mod(stride * pts, 1.0)
+
+    b = 2 * K + 1
+    C = _slices(D, K)
+    grid = _grid(b, d)
+    grid_inf = np.abs(grid).max(axis=1)
+    head = grid[np.arange(len(grid)), np.argmax(grid != 0, axis=1)] > 0   # half space, m != 0
+    engine = _BatchedNufft(pts[:, :d], backend, precision, tol)
+    xp = engine.xp
+    v_x, c_x = xp.asarray(pts[:, d:]), xp.asarray(c)
+    B = _batch_size(N, b, d, len(C))
+
+    ks, Fs = [], []
+    for s in range(0, len(C), B):
+        batch = np.arange(s, min(s + B, len(C)))
+        w = xp.zeros((B, N), dtype=engine.dtype)         # padded to B: one plan
+        if D > d:                                        # slice c: weights c_j exp(2i pi c.v_j)
+            phase = v_x @ xp.asarray(C[batch].T, dtype=float)
+            w[:len(batch)] = c_x[None, :] * xp.exp(2j * np.pi * phase.T)
+        else:
+            w[0] = c_x
+        Fb = engine(w, b)[:len(batch)]
+        for t, i in enumerate(batch):
+            ci = C[i]
+            c_inf = int(np.abs(ci).max()) if ci.size else 0
+            ok = head.copy() if c_inf == 0 else np.ones(len(grid), dtype=bool)
+            if c_inf <= K_in:                            # hole: drop |m|_inf <= K_in
+                ok &= grid_inf > K_in
+            if ok.any():
+                m = grid[ok]
+                ks.append(np.concatenate([m, np.repeat(ci[None], len(m), axis=0)], axis=1))
+                Fs.append(Fb[t][ok])
+    if not ks:
+        return np.zeros((0, D), dtype=np.int64), np.zeros(0, dtype=np.complex128)
+    k, F = np.concatenate(ks), np.concatenate(Fs)
+    flip = k[np.arange(len(k)), np.argmax(k != 0, axis=1)] < 0   # first non-zero coordinate > 0
+    k[flip] *= -1
+    F[flip] = np.conj(F[flip])                           # never happens for D <= 3
+    return stride * k, F
 
 
 def multiscale_cube_sums(
@@ -275,7 +210,6 @@ def multiscale_cube_sums(
     device: str = "auto",
     precision: str = "float32",
     nufft_tolerance: float | str = "auto",
-    verbose: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Level 0: every mode 0 < |n|_inf <= K. Level l = 1 .. n_levels - 1: the modes of 2^l Z^D
@@ -285,7 +219,7 @@ def multiscale_cube_sums(
     ks, Fs = [], []
     for stride, K_in in level_strides(K, n_levels):
         k, F = cube_sums(points, K, weights, stride, K_in, backend, device, precision,
-                         nufft_tolerance, verbose)
+                         nufft_tolerance)
         ks.append(k)
         Fs.append(F)
     return np.concatenate(ks), np.concatenate(Fs)

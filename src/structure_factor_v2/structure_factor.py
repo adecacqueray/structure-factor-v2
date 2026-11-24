@@ -19,23 +19,6 @@ trust_boundary=False
     2. Tapering: weight each point by a separable Kaiser-Bessel taper
     See https://numpy.org/doc/2.5/reference/generated/numpy.kaiser.html
     3. Debiasing with the estimated density rho = N (points per unit volume)
-
-Wave vectors
-------------
-kunit = (rho |W|)^(1/D) is the inter-particle wave number (N^(1/D) with trust_boundary=True),
-K = floor(kunit). One wave vector per pair {n, -n} (S(-n) = S(n)).
-
-D <= CFG.max_exhaustive_D (6): cubes, by `generalised_nufft.multiscale_cube_sums`
-    level 0                 : every mode |n|_inf <= K, exactly. By Minkowski's theorem this
-                              cube (volume 2^D N) contains a Bragg peak of every lattice of
-                              N points on the torus.
-    level l = 1 .. L        : the modes of 2^l Z^D with 2^(l-1) K < |n|_inf <= 2^l K, i.e. the
-                              same NUFFT on the points 2^l x mod 1 (the 2^(lD) sub-cubes of
-                              side 2^-l summed together). L = ceil(log2(CFG.k_max)).
-    (cu)finufft, in 3D slices for D >= 4; a direct-sum backend computes the same modes.
-D > CFG.max_exhaustive_D
-    every mode with |n| <= k_low (k_low set by resolution * CFG.low_mode_fraction), plus an
-    isotropic sample up to CFG.k_max * kunit, all by direct sums; finufft is not used.
 """
 
 from __future__ import annotations
@@ -48,12 +31,11 @@ from dataclasses import dataclass, field
 from .backend import (
     NUFFT_BACKENDS,
     direct_sums,
-    is_available,
     resolve_backend,
     resolve_precision,
 )
 from .generalised_nufft import level_strides, multiscale_cube_sums
-from .torus import cube_wave_vectors, isotropic_wave_vectors
+from .torus import cube_wave_vectors, orbit_wave_vectors
 
 
 @dataclass
@@ -62,12 +44,9 @@ class StructureFactorConfig:
     max_beta: float = 15.0                 # Kaiser taper: leakage ~exp(-2 beta) ~ 1e-13
     k_max: float = 2.0                     # in units of kunit: cubes up to |n|_inf <= 2^ceil(log2 k_max) K
     max_exhaustive_D: int = 6             # D <= this: cubes of modes (see module docstring)
-    low_mode_fraction: float = 0.25        # D > max_exhaustive_D: share of exhaustive low modes
     radial_bins: dict = field(default_factory=lambda: {1: (10, 50), 2: (5, 25), 3: (2, 6)})  # (width, start) in |n|^2
     max_display: int = 30_000              # plot_structure_factor: max raw S(k) drawn (peaks always drawn)
     smoothing: float = 0.01                # gaussian smoothing width, fraction of the log-k range
-    BRAG_PEAK: float = 100.0                # brag_peaks: S(k) >= BRAG_PEAK is a Bragg peak
-    brag_max_work: float = 1e11            # brag_peaks: max NUFFT work (transforms x points)
 
 CFG = StructureFactorConfig()
 
@@ -138,27 +117,9 @@ def n_levels(k_max: float | None = None) -> int:
     return 1 + max(0, math.ceil(math.log2(k_max) - 1e-12))
 
 
-def _resolve_backends(backend: str, D: int, device: str):
-    """(nufft backend or None, direct-sum backend) used for dimension D.
-
-    D <= max_exhaustive_D: "auto" or a (cu)finufft backend -> (cu)finufft for every cube;
-    a direct-sum backend -> used everywhere. D > max_exhaustive_D: direct sums only.
-    """
-    if D <= CFG.max_exhaustive_D:
-        if backend == "auto" or backend in NUFFT_BACKENDS:
-            nufft = resolve_backend(backend, 3, device)
-            direct = "cupy" if nufft == "cufinufft" and is_available("cupy") else "numpy"
-            return nufft, direct
-        return None, resolve_backend(backend, D, device)
-    if backend in NUFFT_BACKENDS:
-        raise ValueError(f"backend {backend!r} is only used for D <= CONFIG.max_exhaustive_D "
-                         f"({CFG.max_exhaustive_D}), got D={D}")
-    return None, resolve_backend(backend, D, device)
-
-
 # ── Core ──────────────────────────────────────────────────────────────────────
 
-def _structure_factor_core(points, resolution, device, precision, trust_boundary,
+def _structure_factor_core(points, nmax_wave_vectors, device, precision, trust_boundary,
                            margin, beta, backend, nufft_tolerance):
     """Return (kint, S, n_exp): wave vectors of the analysed window, S, expected count rho|W|."""
     pts = np.asarray(points, dtype=float).reshape(-1, np.asarray(points).shape[-1])
@@ -172,7 +133,7 @@ def _structure_factor_core(points, resolution, device, precision, trust_boundary
             raise ValueError("margin must be in [0, 0.5)")
         keep = np.all((pts >= margin) & (pts < 1.0 - margin), axis=1)
         pts = (pts[keep] - margin) / side
-        n_exp = N * side ** D                      # promised density x volume of the window
+        n_exp = N * side ** D                      # estimated density x volume of the window
         if beta is None:
             beta = auto_beta(N, D, margin)
         weights = _kaiser_weights(pts, beta)
@@ -183,25 +144,22 @@ def _structure_factor_core(points, resolution, device, precision, trust_boundary
     kunit = float(n_exp ** (1.0 / D))
     kmax = CFG.k_max * kunit
     precision = resolve_precision(precision)
-    nufft, direct = _resolve_backends(backend, D, device)
 
     if D <= CFG.max_exhaustive_D:                  # cubes: all modes, then stride 2, 4, ...
         K = max(1, int(math.floor(kunit * (1.0 + 1e-12))))
         L = n_levels()
-        if nufft is not None:
-            kint, F = multiscale_cube_sums(pts, K, L, weights, nufft, device, precision,
+        backend = resolve_backend(backend, min(D, 3), device)   # "auto" -> (cu)finufft
+        if backend in NUFFT_BACKENDS:
+            kint, F = multiscale_cube_sums(pts, K, L, weights, backend, device, precision,
                                            nufft_tolerance)
-        else:
+        else:                                      # direct-sum backend asked for: same modes
             kint = np.concatenate([cube_wave_vectors(K, D, s, K_in)
                                    for s, K_in in level_strides(K, L)])
-            F = direct_sums(pts, weights, kint, direct, precision)
-    else:                                          # low modes + isotropic sample of the others
-        k_low = max(int((resolution * CFG.low_mode_fraction) ** (1.0 / D)), 1)
-        if kmax <= k_low:
-            kmax = k_low + 1
-        kint = isotropic_wave_vectors(k_low, kmax, D, int(resolution * (1.0 - CFG.low_mode_fraction)))
-        kint = kint.astype(np.int64)
-        F = direct_sums(pts, weights, kint, direct, precision)
+            F = direct_sums(pts, weights, kint, backend, precision)
+    else:                                          # same number of vectors per orbit |n| = cst
+        backend = resolve_backend(backend, D, device)
+        kint = orbit_wave_vectors(int(math.floor(kmax ** 2 * (1.0 + 1e-12))), D, nmax_wave_vectors)
+        F = direct_sums(pts, weights, kint, backend, precision)
 
     if taper:
         F = F - n_exp * _kaiser_ft(kint, beta)
@@ -230,7 +188,7 @@ def _gaussian_filter1d(x, sigma, truncate=4.0):
 
 def structure_factor(
     points: np.ndarray,
-    resolution: int = 30_000,
+    nmax_wave_vectors: int = 30_000,
     device="auto",
     precision="float64",
     trust_boundary: bool = True,
@@ -245,15 +203,14 @@ def structure_factor(
     Parameters
     ----------
     points         : (N, D) array of point coordinates in [0, 1)^D.
-    resolution     : D > CONFIG.max_exhaustive_D only: total number of wave vectors.
-                     Ignored for D <= CONFIG.max_exhaustive_D (cubes of modes, see the
-                     module docstring).
-    device         : "auto" | "cpu" | "gpu": for backend="auto" only, "cpu" never picks
-                     cufinufft / cupy.
+    nmax_wave_vectors : budget of wave vectors, for dimension D > 6 only,
+                        so that computation remain fast. The given amount
+                        of wave vectors will be subsampled and evaluted.
+    device         : "auto" | "cpu" | "gpu"
     precision      : "float32" | "float64". Use float64 to resolve S below ~1e-6.
     trust_boundary : True (default): plain estimate on the whole cube.
                      False: truncate to [margin, 1 - margin]^D, Kaiser-taper, debias
-                     with the promised density (see module docstring).
+                     with the estimated density (see module docstring).
     margin         : width removed on each side (trust_boundary=False only),
                      default structure_factor_v2.CONFIG.margin (0.1).
     beta           : Kaiser parameter (trust_boundary=False only). Larger -> less
@@ -261,12 +218,8 @@ def structure_factor(
                      None (default) -> auto_beta(N, D, margin).
     backend        : "auto" | "finufft" | "cufinufft" | "keops" | "torch" | "numpy" | "cupy"
                      (see `structure_factor_v2.backend`).
-                     D <= CONFIG.max_exhaustive_D: "auto" or (cu)finufft -> (cu)finufft for
-                     every cube; a direct-sum backend computes the same modes (exact, slow:
-                     cost ~ 2^D N^2 per level).
-                     D > CONFIG.max_exhaustive_D: direct sums only ("auto": cupy or numpy).
     nufft_tolerance: relative tolerance of (cu)finufft, float or "auto"
-                     (1e-5 in float32, 1e-12 in float64). Ignored by the direct sums (exact).
+                     (1e-6 in float32, 1e-12 in float64). Ignored by the direct sums (exact).
 
     Returns
     -------
@@ -279,14 +232,14 @@ def structure_factor(
     ----
     Points must lie in the unit hypercube [0, 1)^D. This is not checked.
     """
-    kint, S, _ = _structure_factor_core(points, resolution, device, precision,
+    kint, S, _ = _structure_factor_core(points, nmax_wave_vectors, device, precision,
                                         trust_boundary, margin, beta, backend, nufft_tolerance)
     return kint, S
 
 
 def structure_factor_and_average(
     points,
-    resolution: int = 30_000,
+    nmax_wave_vectors: int = 30_000,
     min_val: float = 1e-30,
     precision="float64",
     trust_boundary: bool = True,
@@ -299,22 +252,11 @@ def structure_factor_and_average(
     """
     Structure factor of a point set, raw and radially averaged, ready to plot.
 
-    resolution : as in ``structure_factor`` (D > CONFIG.max_exhaustive_D only).
-    min_val    : floor of the returned values (log plots).
-    ``precision``, ``trust_boundary``, ``margin``, ``beta``, ``backend``, ``nufft_tolerance``
-    and ``device`` behave as in ``structure_factor``.
-
-    Returns
-    -------
-    kraw, Sraw     : normalised wave numbers and raw S values (subsampled for display).
-    kgroup, Sgroup : radially averaged then log-k smoothed curve.
-
-    Wave numbers are normalised so that k = 1 corresponds to |n| = (rho |W|)^(1/D),
-    i.e. to the inter-particle distance, in both modes.
+    see structure_factor()
     """
     pts = np.asarray(points).reshape(-1, np.asarray(points).shape[-1])
     D = pts.shape[1]
-    kint, Sraw, n_exp = _structure_factor_core(pts, resolution, device,
+    kint, Sraw, n_exp = _structure_factor_core(pts, nmax_wave_vectors, device,
                                                precision, trust_boundary, margin, beta, backend,
                                                nufft_tolerance)
     kunit = n_exp ** (1.0 / D)

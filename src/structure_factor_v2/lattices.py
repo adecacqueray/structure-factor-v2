@@ -208,30 +208,23 @@ def _shortest_dual_vector(z: np.ndarray, N: int) -> float:
     return float(np.linalg.norm(_lll(basis)[0]))
 
 
-def _gram_schmidt(B: np.ndarray):
-    D = len(B)
-    B_star = np.zeros_like(B)
-    mu = np.zeros((D, D))
-    for i in range(D):
-        B_star[i] = B[i]
-        for j in range(i):
-            mu[i, j] = B[i] @ B_star[j] / (B_star[j] @ B_star[j])
-            B_star[i] -= mu[i, j] * B_star[j]
-    return B_star, mu
-
-
 def _lll(B: np.ndarray, delta: float = 0.99) -> np.ndarray:
-    """LLL reduction of the lattice spanned by the rows of B."""
+    """LLL reduction of the lattice spanned by the rows of B.
+
+    Gram-Schmidt from a QR factorisation (LAPACK) of the first k + 1 rows, once per step;
+    the size reduction of row k updates its mu coefficients in place."""
     B = B.astype(np.float64).copy()
     k = 1
     while k < len(B):
-        _, mu = _gram_schmidt(B)
-        for j in range(k - 1, -1, -1):                      # size reduction
+        R = np.linalg.qr(B[:k + 1].T, mode="r")            # B[i] = sum_j R[j, i] q_j
+        r = np.diag(R)                                      # +- |b*_i|
+        mu = R.T / r[None, :]                               # mu[i, j] = <b_i, b*_j> / |b*_j|^2
+        for j in range(k - 1, -1, -1):                      # size reduction of row k
             q = round(mu[k, j])
             if q != 0:
                 B[k] -= q * B[j]
-        B_star, mu = _gram_schmidt(B)
-        if B_star[k] @ B_star[k] >= (delta - mu[k, k - 1] ** 2) * (B_star[k - 1] @ B_star[k - 1]):
+                mu[k, :j + 1] -= q * mu[j, :j + 1]
+        if r[k] ** 2 >= (delta - mu[k, k - 1] ** 2) * r[k - 1] ** 2:
             k += 1                                          # Lovasz condition holds
         else:
             B[[k, k - 1]] = B[[k - 1, k]]

@@ -1,16 +1,16 @@
 """
 The unit torus [0, 1)^D and its dual lattice Z^D.
 
-    integer_grid, ball, half_ball, half_cube, cube_wave_vectors
-                            integer points of Z^D: grids, balls, cubes, one representative
-                            per pair {k, -k}
-    isotropic_wave_vectors  low modes + isotropically sampled high modes (D >= 4)
-
-Balls are given by an integer squared radius r2: ball(r2, D) = {k in Z^D : |k|^2 <= r2}.
-They are built shell by shell (cylinders over the (D-1)-ball), so memory never exceeds the
-size of the output, even for millions of vectors.
+    integer_grid, half_cube, cube_wave_vectors
+                            integer points of Z^D: grids, cubes, one representative per
+                            pair {k, -k}
+    orbit_wave_vectors      the same number of wave vectors on each orbit |k|^2 = r2 (high D)
 """
 from __future__ import annotations
+
+import itertools
+import math
+from collections import Counter
 
 import numpy as np
 
@@ -21,56 +21,6 @@ def integer_grid(axis, D: int) -> np.ndarray:
     """Cartesian product axis^D, as a (len(axis)^D, D) array in 'ij' order."""
     grids = np.meshgrid(*([np.asarray(axis)] * D), indexing="ij")
     return np.stack([g.ravel() for g in grids], axis=1)
-
-
-def _isqrt(x):
-    """Exact floor(sqrt(x)) of non-negative integers."""
-    x = np.asarray(x, dtype=np.int64)
-    z = np.floor(np.sqrt(x.astype(np.float64))).astype(np.int64)
-    z -= z * z > x
-    z += (z + 1) * (z + 1) <= x
-    return z
-
-
-def _cylinders(counts, lo):
-    """Concatenation of the integer ranges [lo[i], lo[i] + counts[i]), int32."""
-    starts = np.cumsum(counts) - counts
-    z = np.arange(int(counts.sum()), dtype=np.int32)
-    z -= np.repeat(starts, counts).astype(np.int32)
-    z += np.repeat(np.asarray(lo, dtype=np.int32), counts)
-    return z
-
-
-def ball(r2: int, D: int) -> np.ndarray:
-    """All k in Z^D with |k|^2 <= r2, int32, in lexicographic order."""
-    if D == 1:
-        K = int(_isqrt(r2))
-        return np.arange(-K, K + 1, dtype=np.int32)[:, None]
-    head = ball(r2, D - 1)
-    m = _isqrt(r2 - np.sum(head.astype(np.int64) ** 2, axis=1))
-    counts = 2 * m + 1
-    return np.concatenate([np.repeat(head, counts, axis=0), _cylinders(counts, -m)[:, None]], axis=1)
-
-
-def _half_ball_last_positive(r2: int, D: int) -> np.ndarray:
-    """Half-ball whose representatives have their *last* non-zero coordinate positive."""
-    if D == 1:
-        return np.arange(1, int(_isqrt(r2)) + 1, dtype=np.int32)[:, None]
-    head = ball(r2, D - 1)                                  # last coordinate > 0
-    m = _isqrt(r2 - np.sum(head.astype(np.int64) ** 2, axis=1))
-    upper = np.concatenate([np.repeat(head, m, axis=0), _cylinders(m, np.ones_like(m))[:, None]], axis=1)
-    flat = _half_ball_last_positive(r2, D - 1)              # last coordinate = 0
-    flat = np.concatenate([flat, np.zeros((len(flat), 1), dtype=np.int32)], axis=1)
-    return np.concatenate([upper, flat], axis=0)
-
-
-def half_ball(r2: int, D: int) -> np.ndarray:
-    """One k per pair {k, -k} with 0 < |k|^2 <= r2 (first non-zero coordinate > 0), int32,
-    in lexicographic order."""
-    k = _half_ball_last_positive(int(r2), D)
-    first = k[np.arange(len(k)), np.argmax(k != 0, axis=1)]
-    k = k * np.sign(first)[:, None].astype(np.int32)
-    return k[np.lexsort(k.T[::-1])]
 
 
 def half_cube(K: int, D: int) -> np.ndarray:
@@ -89,15 +39,98 @@ def cube_wave_vectors(K: int, D: int, stride: int = 1, K_in: int | None = None) 
     return stride * m
 
 
-# ── Wave vectors ──────────────────────────────────────────────────────────────
+# ── Orbits |k|^2 = r2 ─────────────────────────────────────────────────────────
 
-def isotropic_wave_vectors(k_low: int, k_max: float, D: int, n_high: int) -> np.ndarray:
-    """Every mode with |k| <= k_low, plus n_high modes drawn isotropically in k_low < |k| < k_max
-    (rounded to Z^D, deduplicated, origin removed)."""
-    low = half_ball(k_low ** 2, D)
-    dirs = np.random.normal(size=(n_high, D))
-    dirs /= np.linalg.norm(dirs, axis=1, keepdims=True)
-    radii = np.random.uniform(k_low, k_max, size=(n_high, 1))
-    high = np.rint(radii * dirs).astype(int)
-    k = np.concatenate([low, high], axis=0)
-    return np.unique(k[np.any(k != 0, axis=1)], axis=0)
+def _shapes(r2: int, D: int, top: int | None = None) -> list:
+    """Non-increasing tuples of positive integers, at most D of them, with sum of squares r2."""
+    if r2 == 0:
+        return [()]
+    if D == 0:
+        return []
+    top = math.isqrt(r2) if top is None else min(top, math.isqrt(r2))
+    out = []
+    for a in range(top, 0, -1):
+        out += [(a,) + s for s in _shapes(r2 - a * a, D - 1, a)]
+    return out
+
+
+def _shape_count(shape: tuple, D: int) -> int:
+    """Number of k in Z^D whose sorted non-zero |coordinates| are `shape`."""
+    p = len(shape)
+    n = math.perm(D, p) * 2 ** p
+    for m in Counter(shape).values():
+        n //= math.factorial(m)
+    return n
+
+
+def _canonical(k: np.ndarray) -> np.ndarray:
+    """Representative of {k, -k} whose first non-zero coordinate is positive."""
+    first = k[np.arange(len(k)), np.argmax(k != 0, axis=1)]
+    return k * np.where(first < 0, -1, 1)[:, None]
+
+
+def orbit_size(r2: int, D: int) -> int:
+    """Number of k in Z^D with |k|^2 = r2."""
+    return sum(_shape_count(s, D) for s in _shapes(int(r2), D))
+
+
+def _enumerate_orbit(r2: int, D: int) -> np.ndarray:
+    """Every k with |k|^2 = r2, one per pair {k, -k} (small orbits only)."""
+    rows = []
+    for shape in _shapes(r2, D):
+        p = len(shape)
+        vals = np.array(sorted(set(itertools.permutations(shape))), dtype=np.int64)   # (P, p)
+        signs = np.array(list(itertools.product((1, -1), repeat=p)), dtype=np.int64)   # (2^p, p)
+        sv = (vals[:, None, :] * signs[None, :, :]).reshape(-1, p)
+        for pos in itertools.combinations(range(D), p):
+            k = np.zeros((len(sv), D), dtype=np.int64)
+            k[:, pos] = sv
+            rows.append(k)
+    if not rows:
+        return np.zeros((0, D), dtype=np.int64)
+    k = np.concatenate(rows)
+    return np.unique(_canonical(k), axis=0)
+
+
+def _sample_orbit(r2: int, D: int, n: int, rng) -> np.ndarray:
+    """n distinct k with |k|^2 = r2 (one per pair {k, -k}), uniform on the orbit: a shape is
+    drawn with probability proportional to its size, then random positions and signs."""
+    shapes = _shapes(r2, D)
+    counts = np.array([float(_shape_count(s, D)) for s in shapes])
+    prob = counts / counts.sum()
+    found = np.zeros((0, D), dtype=np.int64)
+    for _ in range(50):
+        m = 2 * (n - len(found)) + 16
+        which = rng.choice(len(shapes), size=m, p=prob)
+        k = np.zeros((m, D), dtype=np.int64)
+        for i in np.unique(which):
+            rows = np.flatnonzero(which == i)
+            p = len(shapes[i])
+            pos = np.argsort(rng.random((len(rows), D)), axis=1)[:, :p]   # random ordered slots
+            sgn = rng.choice((-1, 1), size=(len(rows), p))
+            k[rows[:, None], pos] = sgn * np.array(shapes[i], dtype=np.int64)
+        found = np.unique(np.concatenate([found, _canonical(k)]), axis=0)
+        if len(found) >= n:
+            break
+    if len(found) > n:
+        found = found[rng.choice(len(found), n, replace=False)]
+    return found
+
+
+def orbit_wave_vectors(r2_max: int, D: int, n_max: int, seed=0) -> np.ndarray:
+    """For every orbit |k|^2 = r2, r2 = 1 .. r2_max, the same number n_max // r2_max of wave
+    vectors (at least 1), one per pair {k, -k}, drawn uniformly on the orbit; every vector
+    of the orbits that hold fewer. int64, sorted by |k|^2."""
+    rng = np.random.default_rng(seed)
+    r2_max = int(r2_max)
+    per_orbit = max(1, int(n_max) // max(r2_max, 1))
+    out = []
+    for r2 in range(1, r2_max + 1):
+        size = orbit_size(r2, D) // 2
+        if size == 0:
+            continue
+        out.append(_enumerate_orbit(r2, D) if size <= per_orbit
+                   else _sample_orbit(r2, D, per_orbit, rng))
+    if not out:
+        return np.zeros((0, D), dtype=np.int64)
+    return np.concatenate(out)

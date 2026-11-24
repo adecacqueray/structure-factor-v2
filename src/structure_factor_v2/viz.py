@@ -71,7 +71,7 @@ def plot(
 
 def plot_structure_factor(
     points: NDArray,
-    resolution: int = 30_000,
+    nmax_wave_vectors: int = 30_000,
     precision: str = "float64",
     detect_peaks: bool = True,
     ax: plt.Axes | None = None,
@@ -83,6 +83,7 @@ def plot_structure_factor(
     backend: str = "auto",
     nufft_tolerance: float | str = "auto",
     device: str = "auto",
+    resolution: int = 30_000,
     **plot_kw,
 ) -> tuple[plt.Figure, plt.Axes] | None:
     """
@@ -102,8 +103,8 @@ def plot_structure_factor(
     Parameters
     ----------
     points : (N, D) array in the unit cube (not checked).
-    resolution : D > CONFIG.max_exhaustive_D only: number of sampled wave vectors
-        (see `structure_factor`).
+    nmax_wave_vectors : D > CONFIG.max_exhaustive_D only: budget of wave vectors, shared
+        equally between the orbits |n| = cst (see `structure_factor`).
     precision : "float32", or "float64" (much slower) to resolve S below ~1e-10.
     detect_peaks : bool, whether to add the bragg peak-detector layer:
         S >= 100*local_S get grey, S >= 100 get red
@@ -118,11 +119,11 @@ def plot_structure_factor(
     beta : Kaiser parameter, trust_boundary=False only. Larger: less leakage (~exp(-2 beta)),
         coarser resolution at small k. None: automatic (`structure_factor.auto_beta`).
     backend, nufft_tolerance, device : Fourier sums, as in `structure_factor`.
+    resolution: not used (old keyword for nmax_wave_vectors, name was ambiguous)
     **plot_kw : forwarded to ``ax.loglog`` for the smoothed curve.
     """
     pts = np.asarray(points).reshape(-1, np.asarray(points).shape[-1])
     N, D = pts.shape
-    detect_peaks = plot_kw.pop("detect_brag_peaks", detect_peaks)
     k_right = 2.0
 
     if isinstance(trust_boundary, str):
@@ -149,7 +150,7 @@ def plot_structure_factor(
     for trust in modes:
         # --- Compute structure factor and averages ---
         k, S, kgroup, Sgroup = structure_factor_and_average(
-            pts, resolution=resolution, precision=precision,
+            pts, nmax_wave_vectors=nmax_wave_vectors, precision=precision,
             trust_boundary=trust, margin=margin, beta=beta,
             backend=backend, nufft_tolerance=nufft_tolerance, device=device,
         )

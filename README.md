@@ -40,9 +40,11 @@ Built-in samplers:
 ```python
 sf.plot_structure_factor(np.random.rand(N, D))          # Poisson: S = 1
 sf.plot_structure_factor(sf.korobov_lattice(N, D))      # crystal
-sf.plot_structure_factor(sf.jittered_lattice(N, D))     # noisy cristal, remove brag peaks
-sf.plot_structure_factor(sf.curled_lattice(N, D))       # curl noise (better than jittering)
+sf.plot_structure_factor(sf.jittered_lattice(N, D))     # noisy cristal (hyperuniform, but free of bragg peaks)
+sf.plot_structure_factor(sf.curled_lattice(N, D))       # curl noise (replace iid jitter with divergence free perturbation)
 ```
+
+![example](example.png)
 
 ---
 
@@ -55,7 +57,7 @@ sf.plot_structure_factor(sf.curled_lattice(N, D))       # curl noise (better tha
 | `"both"`         | (plots only) compare the two                                | 
 
 ```python
-sf.plot_structure_factor(x, trust_boundary=False)              
+sf.plot_structure_factor(x, trust_boundary="both")              
 ```
 
 ---
@@ -102,3 +104,6 @@ Used by [blue-sampler](https://pypi.org/project/blue-sampler/).
 ## License
 
 MIT
+
+
+[def]: example.png
