@@ -10,7 +10,7 @@ scattering intensity, with fast transforms (finufft / cufinufft) and ready-made 
 For a point set $(x_j)_{1 \le j \le N} \subset [0, 1)^D$, the structure factor (or power spectrum) is
 
 ```math
-S(k) = \frac{1}{N} \left| \sum_{j=1}^{N} e^{-2i\pi \langle k, x_j\cdot N^{\frac{1}{D}} \rangle} \right|^2.
+S(k) = \frac{1}{N} \left| \sum_{j=1}^{N} e^{-2i\pi \langle k, x_j} \rangle} \right|^2.
 ```
 
 $S(k)$ measures density fluctuations in Fourier space. A pattern is hyperuniform (blue noise) when
