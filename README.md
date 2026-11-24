@@ -1,7 +1,6 @@
 # structure-factor-v2
 
 [![PyPI](https://img.shields.io/pypi/v/structure-factor-v2.svg)](https://pypi.org/project/structure-factor-v2/)
-[![Python](https://img.shields.io/pypi/pyversions/structure-factor-v2.svg)](https://pypi.org/project/structure-factor-v2/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/adecacqueray/structure-factor-v2/blob/main/LICENSE)
 [![GitHub](https://img.shields.io/badge/GitHub-adecacqueray%2Fstructure--factor--v2-181717?logo=github)](https://github.com/adecacqueray/structure-factor-v2)
 
