@@ -35,9 +35,3 @@ keops_build*/
 .DS_Store
 Thumbs.db
 desktop.ini
-
-# Local outputs (figures, data)
-*.png
-*.jpg
-*.npy
-*.npz
