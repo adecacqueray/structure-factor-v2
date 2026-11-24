@@ -59,7 +59,7 @@ sf.plot_structure_factor(sf.curled_lattice(N, D))       # curl noise (iid jitter
 - `structure-factor-v2` only accepts points in the unit cube $[0, 1)^D$. If your points live in
   another domain, first extract a cubic sub-window, rescale it to $[0, 1)^D$, and use
   `trust_boundary=False` (see below) to compensate for the induced boundary effects.
-- To make plots comparable across $N$ and $D$, the x-axis use a scale invariant convention: an abscissa of 1
+- To make plots comparable across $N$ and $D$, the absica-axis of plot_structure_factor use a scale invariant convention: an abscissa of 1
   corresponds to a wavelength of the order of the mean interparticle distance $N^{-1/D}$.
 
 ---
